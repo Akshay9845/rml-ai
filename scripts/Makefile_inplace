@@ -1,0 +1,26 @@
+CXX = clang++
+CXXFLAGS = -O3 -march=native -mtune=native -std=c++17 -DNDEBUG -fomit-frame-pointer -ffast-math -funroll-loops
+LDFLAGS = -pthread
+
+TARGET = fast_inplace_converter
+SOURCE = fast_inplace_converter.cpp
+
+# macOS specific flags
+ifeq ($(shell uname), Darwin)
+    CXXFLAGS += -framework Foundation -framework CoreFoundation
+endif
+
+all: $(TARGET)
+
+$(TARGET): $(SOURCE)
+	$(CXX) $(CXXFLAGS) -o $(TARGET) $(SOURCE) $(LDFLAGS)
+	@echo "✅ Compiled $(TARGET) successfully"
+
+clean:
+	rm -f $(TARGET)
+	@echo "🧹 Cleaned build files"
+
+run: $(TARGET)
+	./$(TARGET) data/
+
+.PHONY: all clean run 

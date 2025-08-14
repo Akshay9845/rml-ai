@@ -1,0 +1,140 @@
+# R-LLM Training Configuration
+# Optimized for RML (Resonant Memory Language) training
+
+model:
+  name: "mistral-7b"  # Base model to fine-tune
+  max_length: 4096
+  use_flash_attention: true
+  gradient_checkpointing: true
+
+training:
+  # Data configuration
+  train_file: "data/training_ready/train.jsonl"
+  validation_file: "data/training_ready/val.jsonl"
+  test_file: "data/training_ready/test.jsonl"
+  
+  # Training parameters
+  num_train_epochs: 3
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 16
+  learning_rate: 2e-5
+  warmup_steps: 1000
+  weight_decay: 0.01
+  
+  # Optimization
+  optim: "adamw_torch"
+  lr_scheduler_type: "cosine"
+  fp16: true
+  bf16: false
+  
+  # Checkpointing
+  save_steps: 1000
+  eval_steps: 1000
+  save_total_limit: 3
+  
+  # Logging
+  logging_steps: 100
+  evaluation_strategy: "steps"
+  
+  # Output
+  output_dir: "models/checkpoints/rml_v1"
+  overwrite_output_dir: true
+
+data:
+  # RML-specific formatting
+  rml_format: true
+  include_tags: true  # <CONCEPT>, <REASONING>, etc.
+  max_concepts_per_sample: 50
+  max_entities_per_sample: 30
+  max_triples_per_sample: 20
+  
+  # Text processing
+  remove_html: true
+  clean_whitespace: true
+  min_text_length: 100
+  max_text_length: 2048
+
+tokenizer:
+  # Custom RML tokenizer
+  tokenizer_path: "models/tokenizers/rml_tokenizer/"
+  vocab_size: 50000
+  model_type: "bpe"
+  
+  # Special tokens for RML
+  special_tokens:
+    - "<CONCEPT>"
+    - "</CONCEPT>"
+    - "<TRIPLE>"
+    - "</TRIPLE>"
+    - "<ENTITY>"
+    - "</ENTITY>"
+    - "<REASONING>"
+    - "</REASONING>"
+    - "<EMOTION>"
+    - "</EMOTION>"
+    - "<INTENT>"
+    - "</INTENT>"
+    - "<SUMMARY>"
+    - "</SUMMARY>"
+    - "<EVENT>"
+    - "</EVENT>"
+
+deepspeed:
+  # DeepSpeed configuration for efficient training
+  zero_optimization:
+    stage: 2
+    offload_optimizer:
+      device: "cpu"
+      pin_memory: true
+    offload_param:
+      device: "cpu"
+      pin_memory: true
+    allgather_partitions: true
+    allgather_bucket_size: 2e8
+    reduce_scatter: true
+    reduce_bucket_size: 2e8
+    overlap_comm: true
+    contiguous_gradients: true
+  
+  # Memory optimization
+  train_batch_size: 64
+  train_micro_batch_size_per_gpu: 4
+  gradient_accumulation_steps: 16
+  
+  # Communication
+  communication_data_type: "fp16"
+  dist_backend: "nccl"
+
+monitoring:
+  # Progress tracking
+  log_level: "info"
+  report_to: ["tensorboard"]
+  run_name: "rml_v1_training"
+  
+  # Metrics to track
+  metrics:
+    - "loss"
+    - "learning_rate"
+    - "epoch"
+    - "rml_accuracy"
+    - "concept_extraction_accuracy"
+    - "reasoning_quality"
+
+# RML-specific training objectives
+rml_training:
+  # Multi-task learning weights
+  task_weights:
+    concept_extraction: 1.0
+    triple_extraction: 0.8
+    entity_recognition: 0.9
+    reasoning_generation: 1.2
+    emotion_detection: 0.7
+    intent_classification: 0.8
+    summary_generation: 1.0
+    event_detection: 0.6
+  
+  # Quality thresholds
+  min_concept_confidence: 0.7
+  min_reasoning_quality: 0.8
+  max_hallucination_rate: 0.05 
