@@ -84,11 +84,50 @@ class RMLEncoder:
         return np.vstack(embeddings) if embeddings else np.array([])
     
     def _extract_text(self, entry: Dict[str, Any]) -> str:
-        """Extract text content from entry"""
+        """Extract text content from entry, handling RML-specific structure"""
+        # First try standard fields
         for field in ['text', 'content', 'body', 'chunk', 'summary', 'title']:
             if field in entry and entry[field]:
                 return str(entry[field])
-        return ""
+        
+        # Handle RML-specific structure
+        text_parts = []
+        
+        # Extract from summaries (first priority for RML data)
+        if 'summaries' in entry and entry['summaries']:
+            if isinstance(entry['summaries'], list) and entry['summaries']:
+                text_parts.append(entry['summaries'][0])
+            elif isinstance(entry['summaries'], str):
+                text_parts.append(entry['summaries'])
+        
+        # Extract from concepts
+        if 'concepts' in entry and entry['concepts']:
+            if isinstance(entry['concepts'], list):
+                text_parts.append(" ".join(entry['concepts'][:10]))  # First 10 concepts
+            elif isinstance(entry['concepts'], str):
+                text_parts.append(entry['concepts'])
+        
+        # Extract from tags
+        if 'tags' in entry and entry['tags']:
+            if isinstance(entry['tags'], list):
+                text_parts.append(" ".join(entry['tags'][:10]))  # First 10 tags
+            elif isinstance(entry['tags'], str):
+                text_parts.append(entry['tags'])
+        
+        # Combine all parts
+        if text_parts:
+            return " ".join(text_parts)
+        
+        # Fallback: convert entire entry to string (excluding large arrays)
+        filtered_entry = {}
+        for k, v in entry.items():
+            if k not in ['vectors', 'embeddings'] and v:
+                if isinstance(v, list) and len(v) > 20:
+                    filtered_entry[k] = v[:5]  # Only first 5 items of large lists
+                else:
+                    filtered_entry[k] = v
+        
+        return str(filtered_entry) if filtered_entry else "No content available"
 
 
 class RMLDecoder:
@@ -198,12 +237,20 @@ class RMLSystem:
             response = "I couldn't find relevant information in the dataset."
             sources = ["internal dataset"]
         else:
-            # Build context from search results
-            context = "\n\n".join([r['text'] for r in results])
-            prompt = f"Based on the following context, answer this question: {message}\n\nContext:\n{context}\n\nAnswer:"
+            # Build context from search results (limit to prevent repetition)
+            unique_texts = []
+            seen_texts = set()
+            for r in results[:3]:  # Only use top 3 results to avoid repetition
+                text = r['text'][:200]  # Limit text length
+                if text not in seen_texts:
+                    unique_texts.append(text)
+                    seen_texts.add(text)
+            
+            context = "\n\n".join(unique_texts)
+            prompt = f"Based on the following context, provide a clear and concise answer to: {message}\n\nContext:\n{context}\n\nAnswer:"
             
             # Generate response
-            answer = self.decoder.generate(prompt)
+            answer = self.decoder.generate(prompt, max_length=256)  # Limit response length
             
             if not answer or len(answer.strip()) < 10:
                 # Fallback to extractive answer
@@ -212,12 +259,17 @@ class RMLSystem:
             # Clean and format response
             answer = self._clean_response(answer)
             
+            # Ensure answer isn't too repetitive
+            if len(answer) > 500:
+                # If too long, use extractive answer instead
+                answer = self._build_extractive_answer(results)
+            
             # Add sources
             sources = list(set([r.get('source', 'internal dataset') for r in results]))
             if not sources:
                 sources = ["internal dataset"]
             
-            response = f"{answer}\n\nSources**:\n- " + "\n- ".join(sources)
+            response = answer
         
         response_time = (time.time() - start_time) * 1000
         
@@ -234,14 +286,48 @@ class RMLSystem:
         
         # Use the most relevant result
         best_result = results[0]
-        text = best_result.get('text', '')
         
-        # Extract first sentence or meaningful chunk
-        sentences = text.split('.')
-        if sentences:
-            return sentences[0].strip() + "."
+        # Try to build a comprehensive answer from RML components
+        answer_parts = []
         
-        return text[:200] + "..." if len(text) > 200 else text
+        # Extract from summaries first (most informative)
+        if 'summaries' in best_result and best_result['summaries']:
+            if isinstance(best_result['summaries'], list) and best_result['summaries']:
+                summary = best_result['summaries'][0]
+                if len(summary) > 20:  # Ensure it's substantial
+                    answer_parts.append(summary)
+        
+        # If no good summary, build from concepts and other fields
+        if not answer_parts:
+            if 'concepts' in best_result and best_result['concepts']:
+                concepts = best_result['concepts']
+                if isinstance(concepts, list):
+                    # Create a sentence from concepts
+                    concept_text = " ".join(concepts[:15])  # First 15 concepts
+                    answer_parts.append(f"This relates to: {concept_text}")
+            
+            if 'tags' in best_result and best_result['tags']:
+                tags = best_result['tags']
+                if isinstance(tags, list):
+                    tag_text = " ".join(tags[:10])  # First 10 tags
+                    if tag_text not in str(answer_parts):  # Avoid duplication
+                        answer_parts.append(f"Key topics include: {tag_text}")
+        
+        # Fallback to text field
+        if not answer_parts:
+            text = best_result.get('text', '')
+            if text:
+                sentences = text.split('.')
+                if sentences and len(sentences[0]) > 10:
+                    answer_parts.append(sentences[0].strip() + ".")
+                else:
+                    answer_parts.append(text[:200] + "..." if len(text) > 200 else text)
+        
+        # Combine all parts
+        if answer_parts:
+            return " ".join(answer_parts)
+        
+        return "I found some relevant information but couldn't extract a clear answer."
     
     def _clean_response(self, response: str) -> str:
         """Clean and format the response"""
